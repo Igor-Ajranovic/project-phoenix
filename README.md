@@ -35,3 +35,9 @@ Build a strong practical foundation in Linux system administration using a dedic
 - Logging and troubleshooting
 - Basic networking
 - Security, backup, and recovery
+
+## Day 1 — Environment Setup
+
+- Installed Git.
+- Configured Fish as the default login shell.
+- Installed Visual Studio Code from the official `.deb` package.
