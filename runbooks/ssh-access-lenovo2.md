@@ -1,464 +1,435 @@
-# SSH Access Runbook — Lenovo2
+# SSH Hardening — phoenix-linux-01
+
+## Document Information
+
+| Field | Value |
+|---|---|
+| Project | Project Phoenix |
+| System | phoenix-linux-01 |
+| Platform | Ubuntu Server 24.04.1 LTS |
+| Environment | Proxmox HomeLab |
+| Network | Servers network |
+| Management IP | `192.168.20.101` |
+| SSH user | `igor` |
+| SSH port | `22` |
+| Authentication method | Ed25519 public key |
+| Status | Completed and verified |
 
 ## Purpose
 
-This runbook documents the standard procedure for securely accessing and administering the Lenovo2 HomeLab server.
+This runbook documents the deployment, verification, and hardening of SSH access for the `phoenix-linux-01` lab virtual machine.
 
-Lenovo2 is a production-like HomeLab service node. Changes should be planned, verified, and documented before execution.
+The objective was to establish secure remote administration using public-key authentication while disabling password-based and root SSH access.
 
----
+## Safety and Recovery Controls
 
-## Target Server
+The following safety controls were used before changing SSH authentication:
 
-| Item | Value |
-|------|------|
-| Host Alias | `lenovo2` |
-| Hostname | `lenovo2` |
-| Administrator User | `igor` |
-| Network Address | `SERVER_IP` |
-| Primary Authentication | SSH Key Authentication |
-| Temporary Fallback | Password Authentication |
-| Remote Editor | Visual Studio Code Remote - SSH |
+- The virtual machine remained accessible through the Proxmox console.
+- Two working SSH sessions were kept open during configuration changes.
+- SSH configuration syntax was validated before every reload.
+- The SSH service was reloaded instead of restarted.
+- A new SSH connection was tested before existing sessions were closed.
+- An Omada Controller configuration backup was created before adding the fixed IP reservation.
 
----
+These controls reduced the risk of losing remote access.
 
-## Standard Terminal Connection
+## Network Configuration
 
-Connect using the local SSH alias:
-
-```bash
-ssh lenovo2
-```
-
-The alias is defined in the local SSH client configuration:
+The virtual machine received the following address:
 
 ```text
-~/.ssh/config
+192.168.20.101/24
 ```
 
-Example configuration:
+A fixed DHCP reservation was created in Omada Controller for the VM network interface.
 
-```ssh
-Host lenovo2
-    HostName SERVER_IP
-    User igor
-    IdentityFile ~/.ssh/id_ed25519_homelab
-```
+This provides a stable management address while retaining centralized DHCP management.
 
----
+## Initial SSH Verification
 
-## Explicit Key Connection
-
-Use the following command when testing a specific SSH key or troubleshooting the SSH client configuration:
+The following commands were used to confirm the system identity and SSH availability:
 
 ```bash
-ssh -i ~/.ssh/id_ed25519_homelab igor@SERVER_IP
+whoami
+hostname
+ssh -V
+systemctl status ssh
+sudo ss -ltnp | grep ':22'
 ```
 
----
+Verified results:
 
-## Session Verification
+- Logged-in user: `igor`
+- Hostname: `phoenix-linux-01`
+- SSH service: active and running
+- Listening port: TCP `22`
+- IPv4 listener: `0.0.0.0:22`
+- IPv6 listener: `[::]:22`
 
-After connecting, verify the current user and target hostname:
+> `ssh -V` displays the installed OpenSSH client version. The running SSH server was verified separately through systemd and the listening socket.
+
+## Initial Effective SSH Configuration
+
+The initial effective configuration was checked with:
+
+```bash
+sudo sshd -T | grep -E '^(port|permitrootlogin|passwordauthentication|pubkeyauthentication) '
+```
+
+Initial relevant settings:
+
+```text
+port 22
+permitrootlogin without-password
+pubkeyauthentication yes
+passwordauthentication yes
+```
+
+This confirmed that public-key authentication was available, but password authentication was still enabled.
+
+## Public-Key Deployment
+
+An existing dedicated HomeLab Ed25519 key was used:
+
+```text
+~/.ssh/id_ed25519_homelab
+```
+
+The public key was installed from the administration laptop:
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519_homelab.pub igor@192.168.20.101
+```
+
+The private key was never copied to the server.
+
+## Public-Key Authentication Test
+
+Key-based access was tested explicitly:
+
+```bash
+ssh -i ~/.ssh/id_ed25519_homelab igor@192.168.20.101
+```
+
+The connection succeeded without requesting the remote account password.
+
+The remote identity was verified with:
 
 ```bash
 whoami
 hostname
 ```
 
-Expected output:
+Expected and confirmed output:
 
 ```text
 igor
-lenovo2
+phoenix-linux-01
 ```
 
-Display the active SSH connection details:
+## Authorized Keys Permissions
+
+The server-side SSH directory and authorized key file were inspected:
 
 ```bash
-echo $SSH_CONNECTION
+ls -la ~/.ssh
+cat ~/.ssh/authorized_keys
 ```
 
-The output contains:
-
-1. client IP address;
-2. client source port;
-3. server IP address;
-4. server SSH port.
-
----
-
-## SSH Service Verification
-
-Check whether the SSH server is running:
-
-```bash
-systemctl status ssh
-```
-
-Expected service state:
+Verified permissions:
 
 ```text
-Active: active (running)
+~/.ssh             700
+~/.ssh/authorized_keys 600
 ```
 
-Check which process is listening on the SSH port:
-
-```bash
-sudo ss -ltnp | grep ':22'
-```
-
-Expected result:
+Verified ownership:
 
 ```text
-LISTEN ... 0.0.0.0:22 ...
-LISTEN ... [::]:22 ...
+igor:igor
 ```
 
-This indicates that the SSH server is listening on IPv4 and IPv6 interfaces.
+The public-key content is intentionally excluded from this public documentation.
 
----
+## SSH Client Alias
 
-## Effective SSH Authentication Settings
+The following host entry was added to the administration laptop's local SSH configuration:
 
-Display the active SSH server settings after all configuration files have been processed:
+```ssh
+Host phoenix-linux-01
+    HostName 192.168.20.101
+    User igor
+    IdentityFile ~/.ssh/id_ed25519_homelab
+```
+
+The alias was tested with:
 
 ```bash
-sudo sshd -T | grep -E '^(port|permitrootlogin|passwordauthentication|pubkeyauthentication) '
+ssh phoenix-linux-01
 ```
 
-Verified baseline:
+The connection completed successfully.
+
+## Key-Only Authentication Test
+
+To confirm that SSH was not silently falling back to password authentication, the following client-side test was performed:
+
+```bash
+ssh -o PasswordAuthentication=no -o IdentitiesOnly=yes phoenix-linux-01
+```
+
+The connection succeeded, confirming that the configured Ed25519 key was sufficient.
+
+## SSH Hardening Configuration
+
+A dedicated configuration drop-in was created:
 
 ```text
-port 22
-permitrootlogin prohibit-password
+/etc/ssh/sshd_config.d/10-phoenix-hardening.conf
+```
+
+File contents:
+
+```ssh
+# Project Phoenix SSH hardening
+PermitRootLogin no
+PasswordAuthentication no
+PubkeyAuthentication yes
+```
+
+A separate drop-in file was used instead of editing the main `/etc/ssh/sshd_config` file.
+
+This makes the configuration easier to audit, document, and reverse.
+
+## Configuration Precedence Issue
+
+The hardening file was initially named:
+
+```text
+99-phoenix-hardening.conf
+```
+
+However, the following cloud-init configuration was already present:
+
+```text
+/etc/ssh/sshd_config.d/50-cloud-init.conf
+```
+
+It contained:
+
+```ssh
+PasswordAuthentication yes
+```
+
+The active definitions were located with:
+
+```bash
+sudo grep -RniE '^[[:space:]]*PasswordAuthentication' \
+  /etc/ssh/sshd_config /etc/ssh/sshd_config.d/
+```
+
+OpenSSH retained the first applicable value encountered during configuration parsing. Because `50-cloud-init.conf` was processed before `99-phoenix-hardening.conf`, password authentication remained enabled.
+
+The Project Phoenix file was renamed so that it loads earlier:
+
+```bash
+sudo mv /etc/ssh/sshd_config.d/99-phoenix-hardening.conf \
+  /etc/ssh/sshd_config.d/10-phoenix-hardening.conf
+```
+
+This corrected the precedence issue without modifying the cloud-init-managed file.
+
+## Syntax Validation
+
+The configuration was validated before applying it:
+
+```bash
+sudo sshd -t
+```
+
+No output was returned, indicating valid SSH server configuration syntax.
+
+## Applying the Configuration
+
+The SSH service configuration was reloaded:
+
+```bash
+sudo systemctl reload ssh
+```
+
+A reload was used instead of a restart to avoid unnecessarily interrupting active SSH sessions.
+
+## Effective Configuration Verification
+
+The active SSH configuration was verified again:
+
+```bash
+sudo sshd -T | grep -E '^(permitrootlogin|passwordauthentication|pubkeyauthentication) '
+```
+
+Confirmed result:
+
+```text
+permitrootlogin no
 pubkeyauthentication yes
+passwordauthentication no
+```
+
+## Final Connection Test
+
+A completely new SSH session was opened from the administration laptop:
+
+```bash
+ssh phoenix-linux-01
+```
+
+The connection succeeded using the configured Ed25519 key.
+
+This confirmed that the server remained remotely accessible after hardening.
+
+## Negative Password Authentication Test
+
+A password-only connection was intentionally attempted:
+
+```bash
+ssh -o PubkeyAuthentication=no \
+  -o PreferredAuthentications=password \
+  igor@192.168.20.101
+```
+
+Expected and confirmed result:
+
+```text
+Permission denied (publickey).
+```
+
+This verified that password authentication was actually disabled and that the server accepted public-key authentication only.
+
+## Final Security State
+
+| Control | State |
+|---|---|
+| SSH service active | Yes |
+| SSH port | `22` |
+| Public-key authentication | Enabled |
+| Password authentication | Disabled |
+| Root SSH login | Disabled |
+| SSH alias tested | Yes |
+| New key-based session tested | Yes |
+| Password-only login rejected | Yes |
+| Proxmox console recovery available | Yes |
+| Fixed management IP | Yes |
+
+## Troubleshooting Notes
+
+### Password authentication remained enabled
+
+Symptom:
+
+```text
 passwordauthentication yes
 ```
 
-### Interpretation
+remained active after adding a hardening drop-in.
 
-- SSH uses the standard TCP port `22`.
-- Public key authentication is enabled.
-- Password authentication is currently enabled as a fallback.
-- Direct root login using a password is not permitted.
-
-Do not disable password authentication until SSH key access and recovery options have been fully verified.
-
----
-
-## SSH Key Authentication
-
-The administrator workstation uses a dedicated HomeLab SSH key:
+Cause:
 
 ```text
-~/.ssh/id_ed25519_homelab
+/etc/ssh/sshd_config.d/50-cloud-init.conf
 ```
 
-The corresponding public key is stored in:
+was processed before the custom configuration and set:
+
+```ssh
+PasswordAuthentication yes
+```
+
+Resolution:
+
+The custom configuration was renamed to:
 
 ```text
-~/.ssh/id_ed25519_homelab.pub
+10-phoenix-hardening.conf
 ```
 
-The public key is installed on Lenovo2 in:
+The syntax was validated, SSH was reloaded, and the effective configuration was checked again.
 
-```text
-/home/igor/.ssh/authorized_keys
-```
+### SSH alias resolved to `127.0.1.1`
 
-The private key must remain only on trusted administrator devices and must never be shared or committed to Git.
-
----
-
-## SSH Agent Verification
-
-List the SSH keys currently loaded into the local SSH agent:
+Running this command from inside the server:
 
 ```bash
-ssh-add -l
+ssh phoenix-linux-01
 ```
 
-The SSH agent temporarily keeps unlocked keys available in memory. This allows repeated SSH connections without entering the key passphrase every time during the same desktop session.
-
----
-
-## Host Identity Verification
-
-The workstation stores trusted SSH server identities in:
+resolved the local hostname to:
 
 ```text
-~/.ssh/known_hosts
+127.0.1.1
 ```
 
-Find the saved Lenovo2 host key:
+This attempted to connect from the server back to itself.
 
-```bash
-ssh-keygen -F SERVER_IP
-```
+Resolution:
 
-Display the locally stored ED25519 fingerprint:
+SSH client alias tests must be performed from the administration laptop where the relevant `~/.ssh/config` entry exists.
 
-```bash
-ssh-keygen -F SERVER_IP | grep ssh-ed25519 | ssh-keygen -lf -
-```
+## Recovery Procedure
 
-Display the active ED25519 host fingerprint directly on Lenovo2:
+If key-based SSH access stops working:
 
-```bash
-sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
-```
+1. Open the `phoenix-linux-01` console in Proxmox.
+2. Log in with the local `igor` account.
+3. Inspect the custom configuration:
 
-The client and server fingerprints must match.
+   ```bash
+   sudo cat /etc/ssh/sshd_config.d/10-phoenix-hardening.conf
+   ```
 
-An unexpected fingerprint change must not be accepted without investigation. Legitimate causes may include a server reinstall or regenerated SSH host keys.
+4. Validate the configuration:
 
----
+   ```bash
+   sudo sshd -t
+   ```
 
-## Visual Studio Code Remote Access
+5. Temporarily move the custom file out of the SSH configuration directory if required:
 
-Lenovo2 can also be administered through the Visual Studio Code Remote - SSH extension.
+   ```bash
+   sudo mv /etc/ssh/sshd_config.d/10-phoenix-hardening.conf \
+     /root/10-phoenix-hardening.conf.disabled
+   ```
 
-### Connection Procedure
+6. Reload SSH:
 
-1. Open **Remote Explorer** in Visual Studio Code.
-2. Select the `lenovo2` SSH target.
-3. Connect using the existing SSH client profile.
-4. Confirm that the lower-left status bar displays:
+   ```bash
+   sudo systemctl reload ssh
+   ```
 
-```text
-SSH: lenovo2
-```
+7. Diagnose the key, ownership, and permission problem before restoring hardened access.
 
-5. Open the integrated terminal.
-6. Confirm that the terminal prompt displays:
+## Security Considerations
 
-```text
-igor@lenovo2
-```
+- The private SSH key must remain only on trusted administration devices.
+- Public keys may be installed on managed servers.
+- Private keys, passwords, complete key material, and sensitive fingerprints must not be committed to Git.
+- Proxmox console access remains the primary recovery method.
+- Password authentication should not be re-enabled as a permanent workaround.
+- SSH configuration changes must always be syntax-tested before reload or restart.
 
-These checks confirm that both the editor and terminal are operating on the remote server.
+## Outcome
 
-### Safe Working Area
+The `phoenix-linux-01` virtual machine now supports secure key-based remote administration.
 
-For training and non-destructive testing, use:
+The completed implementation includes:
 
-```text
-/home/igor/linux-praksa
-```
+- stable network addressing;
+- a dedicated SSH client alias;
+- Ed25519 public-key authentication;
+- disabled password authentication;
+- disabled root SSH access;
+- tested configuration precedence;
+- verified positive and negative authentication tests;
+- documented console recovery procedures.
 
-Avoid modifying production service files, SSH configuration, CasaOS files, Docker configuration, DNS settings, or reverse proxy configuration without a tested plan.
-
----
-
-## Remote Editing Verification
-
-A remote file can be opened and edited through Visual Studio Code.
-
-After saving the file, verify the result in the integrated terminal:
-
-```bash
-cat FILE_NAME
-```
-
-This confirms that the change was written to Lenovo2 rather than the local workstation.
-
-Avoid unnecessary spaces in server-side filenames. Prefer:
-
-```text
-notes-copy.txt
-```
-
-instead of:
-
-```text
-notes copy.txt
-```
-
-When a filename contains spaces, quote it:
-
-```bash
-cat "notes copy.txt"
-```
-
----
-
-## Permission Troubleshooting
-
-### Symptom
-
-Visual Studio Code displays an error similar to:
-
-```text
-EACCES: permission denied
-```
-
-### Investigation
-
-Inspect the file ownership and permissions:
-
-```bash
-ls -l permission-test.txt
-```
-
-Example problematic result:
-
-```text
--rw-r--r-- 1 root root ... permission-test.txt
-```
-
-Interpretation:
-
-- owner `root`: read and write;
-- group `root`: read only;
-- other users, including `igor`: read only.
-
-### Root Cause
-
-The file was created with elevated privileges and belongs to `root`, while it is intended to be managed by the normal administrator account.
-
-### Resolution
-
-Correct the ownership:
-
-```bash
-sudo chown igor:igor permission-test.txt
-```
-
-Verify the result:
-
-```bash
-ls -l permission-test.txt
-```
-
-Expected ownership:
-
-```text
--rw-r--r-- 1 igor igor ... permission-test.txt
-```
-
-### Verification
-
-Save the file again through Visual Studio Code and verify its contents:
-
-```bash
-cat permission-test.txt
-```
-
-### Engineering Lesson
-
-Use `chown` when ownership is incorrect.
-
-Do not use `chmod` merely to give wider permissions to a file that belongs to the wrong user.
-
----
-
-## System File Privilege Boundary
-
-System configuration files such as:
-
-```text
-/etc/hosts
-```
-
-may be readable by normal users but writable only by `root`.
-
-Example permissions:
-
-```text
--rw-r--r-- 1 root root ... /etc/hosts
-```
-
-This means:
-
-- owner `root`: read and write;
-- group `root`: read only;
-- other users: read only.
-
-Visual Studio Code may allow the file to be opened and edited in memory, but Linux permissions are enforced when saving.
-
-Do not test write access on production system files without a valid change request, backup, validation procedure, and recovery plan.
-
----
-
-## Recovery Options
-
-Available recovery methods include:
-
-- physical access using a keyboard and monitor;
-- password authentication while it remains enabled;
-- verified SSH key authentication;
-- Tailscale as an alternative network path;
-- an existing active SSH session during planned configuration changes.
-
-Lenovo2 is a physical mini PC and does not have a Proxmox console.
-
----
-
-## Safety Procedure Before SSH Configuration Changes
-
-Before changing SSH server settings:
-
-1. confirm physical recovery access;
-2. keep the current SSH session open;
-3. open a second test session;
-4. back up the current SSH configuration;
-5. validate the configuration with `sshd -t`;
-6. change one setting at a time;
-7. verify access before closing the original session;
-8. document the change and rollback procedure.
-
----
-
-## Security Notes
-
-- Never share private SSH keys.
-- Protect private keys with a strong passphrase.
-- Store private keys only on trusted administrator devices.
-- Never commit private keys, passwords, tokens, or sensitive configuration to Git.
-- Use separate keys for GitHub and HomeLab administration.
-- Verify unexpected SSH host fingerprint changes.
-- Keep a recovery method available before hardening SSH.
-- Do not expose SSH directly to the public internet without a reviewed security model.
-- Use sanitized placeholders such as `SERVER_IP` in public documentation.
-
----
-
-## Lessons Learned
-
-- SSH clients and SSH servers have different roles.
-- Password login and key authentication are separate authentication methods.
-- A user key proves the administrator's identity to the server.
-- A host key proves the server's identity to the client.
-- `authorized_keys` controls which public keys may access an account.
-- `known_hosts` stores trusted server identities.
-- SSH aliases simplify repeated administration.
-- VS Code Remote - SSH does not bypass Linux permissions.
-- Ownership should be corrected before widening permissions.
-- Always confirm whether work is being performed locally or remotely.
-- Troubleshooting should follow: symptom, evidence, root cause, resolution, verification.
-
----
-
-## Current Status
-
-- SSH client verified on the Ubuntu administration laptop.
-- SSH server verified on Lenovo2.
-- Password authentication verified.
-- Dedicated HomeLab SSH key created.
-- Public key installed on Lenovo2.
-- SSH key authentication verified.
-- SSH agent verified.
-- SSH alias `lenovo2` configured.
-- Host fingerprint verified.
-- Visual Studio Code Remote - SSH verified.
-- Remote file editing verified.
-- Permission troubleshooting completed.
-- Production SSH hardening not yet performed.
-
----
-
-## Related Documents
-
-- `docs/ssh-commands-reference.md`
-- `README.md`
+This lab demonstrates a controlled SSH hardening workflow suitable for Linux infrastructure administration.
