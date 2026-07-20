@@ -392,3 +392,191 @@ This lab demonstrates practical experience with:
 ```text
 runbooks/system-health-and-failed-service-troubleshooting.md
 ```
+---
+
+# Linux Administration Lab — systemd Services and Timers
+
+## Lab Summary
+
+A custom systemd service and recurring timer were created on `phoenix-linux-01`.
+
+The lab demonstrated how Linux can execute a custom administrative script manually, during boot, and on a recurring schedule.
+
+## Components
+
+```text
+/usr/local/bin/phoenix-heartbeat.sh
+/etc/systemd/system/phoenix-heartbeat.service
+/etc/systemd/system/phoenix-heartbeat.timer
+/var/log/phoenix-heartbeat.log
+```
+
+## Execution Model
+
+```text
+phoenix-heartbeat.timer
+        ↓
+phoenix-heartbeat.service
+        ↓
+phoenix-heartbeat.sh
+        ↓
+phoenix-heartbeat.log
+```
+
+The timer defines when execution occurs.
+
+The service defines how execution occurs.
+
+The script performs the actual task.
+
+## Script
+
+The script writes an ISO 8601 timestamp and heartbeat message to a dedicated log file:
+
+```bash
+#!/usr/bin/env bash
+
+echo "$(date --iso-8601=seconds) phoenix-linux-01 heartbeat" >> /var/log/phoenix-heartbeat.log
+```
+
+The script was tested manually before systemd integration.
+
+## Service Unit
+
+The service uses:
+
+```ini
+Type=oneshot
+ExecStart=/usr/local/bin/phoenix-heartbeat.sh
+```
+
+A successful oneshot service completes and returns to:
+
+```text
+inactive (dead)
+```
+
+This is expected behavior.
+
+## Timer Unit
+
+The timer uses:
+
+```ini
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=phoenix-heartbeat.service
+```
+
+The timer executes the service approximately two minutes after boot and every five minutes after activation.
+
+## Lifecycle Testing
+
+The following states were tested:
+
+```text
+enabled + active
+enabled + inactive
+disabled + active
+```
+
+This demonstrated the difference between:
+
+```text
+start and stop
+enable and disable
+runtime state and boot state
+```
+
+## Final Design
+
+The service was disabled from direct boot execution.
+
+The timer remains enabled and active.
+
+Final architecture:
+
+```text
+boot
+  ↓
+phoenix-heartbeat.timer
+  ↓
+phoenix-heartbeat.service
+  ↓
+phoenix-heartbeat.sh
+```
+
+Final state:
+
+```text
+phoenix-heartbeat.service = disabled
+phoenix-heartbeat.timer   = enabled and active
+```
+
+## Validation
+
+Execution was verified through:
+
+```bash
+systemctl status
+systemctl is-active
+systemctl is-enabled
+systemctl list-timers
+journalctl
+tail
+```
+
+The heartbeat log confirmed successful:
+
+- manual execution;
+- service execution;
+- boot execution;
+- timer-triggered execution.
+
+## Lessons Learned
+
+- A script performs the real work.
+- A service defines how systemd runs the script.
+- A timer defines when the service runs.
+- `start` controls the current runtime state.
+- `enable` controls future boot behavior.
+- A oneshot service does not remain active after successful completion.
+- Timers provide a structured alternative to cron.
+- Journal logs provide proof of scheduled execution.
+- Duplicate automatic execution paths should be removed unless intentionally required.
+
+## Practical Applications
+
+This model can be reused for:
+
+- backups;
+- health checks;
+- cleanup jobs;
+- monitoring probes;
+- report generation;
+- certificate checks;
+- maintenance automation;
+- infrastructure notifications.
+
+## Portfolio Evidence
+
+This lab demonstrates practical experience with:
+
+- custom Bash scripts;
+- Linux filesystem conventions;
+- executable permissions;
+- custom systemd service units;
+- oneshot services;
+- systemd timers;
+- boot targets;
+- unit enablement;
+- scheduled automation;
+- journal inspection;
+- service lifecycle management;
+- configuration cleanup.
+
+## Related Runbook
+
+```text
+runbooks/systemd-service-and-timer-lab.md
+```
