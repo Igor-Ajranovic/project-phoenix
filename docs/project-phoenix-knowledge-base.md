@@ -252,3 +252,143 @@ This lab demonstrates practical experience with:
 ```text
 runbooks/safe-system-update-phoenix-linux-01.md
 ```
+
+---
+
+# Linux Administration Lab — System Health and Failed Service Troubleshooting
+
+## Lab Summary
+
+A post-update system health verification and controlled systemd troubleshooting exercise were completed on `phoenix-linux-01`.
+
+The system was checked for failed units, boot errors, resource pressure, network problems, and SSH availability.
+
+A transient systemd unit was then created to simulate a service failure in a safe and reproducible way.
+
+## Health Verification
+
+The following checks were completed:
+
+```bash
+systemctl --failed
+journalctl -p err -b
+free -h
+df -h /
+uptime
+systemctl is-active systemd-networkd systemd-resolved ssh
+ip -brief address
+sudo ss -ltnp | grep ':22'
+```
+
+Confirmed state:
+
+- no failed systemd units;
+- no journal errors from the current boot;
+- low memory use;
+- no swap use;
+- root filesystem at approximately 50%;
+- low system load;
+- networking active;
+- DNS resolution service active;
+- SSH active and listening;
+- fixed management IP preserved.
+
+## Controlled Failure Lab
+
+A transient unit was created:
+
+```bash
+sudo systemd-run --unit=phoenix-failure-lab /bin/false
+```
+
+The unit entered a failed state because `/bin/false` returned exit status `1`.
+
+The failure was detected with:
+
+```bash
+systemctl --failed
+```
+
+The service state was inspected with:
+
+```bash
+systemctl status phoenix-failure-lab --no-pager
+```
+
+The service-specific journal was reviewed with:
+
+```bash
+journalctl -u phoenix-failure-lab --no-pager
+```
+
+The logs confirmed:
+
+```text
+Main process exited, code=exited, status=1/FAILURE
+Failed with result 'exit-code'.
+```
+
+## Cleanup
+
+The failed state was cleared with:
+
+```bash
+sudo systemctl reset-failed phoenix-failure-lab
+```
+
+Final verification:
+
+```bash
+systemctl --failed
+```
+
+Result:
+
+```text
+0 loaded units listed.
+```
+
+## Troubleshooting Model
+
+The exercise followed this troubleshooting sequence:
+
+```text
+Detect
+Inspect
+Correlate status and logs
+Identify the failure type
+Apply a safe corrective action
+Verify the result
+```
+
+## Lessons Learned
+
+- Service health must be verified after updates and reboots.
+- `systemctl --failed` is an effective first diagnostic command.
+- `systemctl status` and `journalctl -u` provide complementary information.
+- A loaded service can still fail during execution.
+- Exit codes help classify failures but must be reviewed together with logs.
+- `systemctl reset-failed` clears the state but does not fix the original cause.
+- Transient units are useful for safe and reproducible troubleshooting labs.
+- A complete health check should include services, logs, resources, networking, and listening ports.
+
+## Portfolio Evidence
+
+This lab demonstrates practical experience with:
+
+- systemd service management;
+- system health verification;
+- journalctl filtering;
+- Linux resource inspection;
+- SSH service validation;
+- TCP listening socket inspection;
+- transient systemd units;
+- process exit-code analysis;
+- failed-state cleanup;
+- structured troubleshooting methodology.
+
+## Related Runbook
+
+```text
+runbooks/system-health-and-failed-service-troubleshooting.md
+```
