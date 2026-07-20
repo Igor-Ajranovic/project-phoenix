@@ -155,3 +155,100 @@ See:
 ```text
 runbooks/ssh-hardening-phoenix-linux-01.md
 ```
+---
+
+# Linux Administration Lab — Safe System Updates and Recovery
+
+## Lab Summary
+
+A controlled operating system update was completed on the `phoenix-linux-01` Ubuntu Server virtual machine.
+
+The workflow included a pre-change snapshot, system health checks, package review, upgrade simulation, controlled installation, reboot, and post-update verification.
+
+## Engineering Workflow
+
+The update followed this sequence:
+
+1. Create a Proxmox snapshot.
+2. Verify system load and free disk space.
+3. Refresh APT repository metadata.
+4. Review available package updates.
+5. Simulate the upgrade.
+6. Confirm that no packages will be removed.
+7. Install the updates.
+8. Review restarted and deferred services.
+9. Confirm that a reboot is required.
+10. Perform a controlled reboot.
+11. Reconnect through SSH.
+12. Verify system uptime and reboot state.
+13. Confirm that networking and SSH remained functional.
+14. Retain the snapshot temporarily as a rollback point.
+15. Document the procedure and recovery plan.
+
+## Update Summary
+
+The simulated upgrade reported:
+
+```text
+111 upgraded, 8 newly installed, 0 to remove and 0 not upgraded.
+```
+
+The package installation completed successfully.
+
+The system required a reboot because some services and user sessions were still using outdated binaries.
+
+## Post-Reboot Validation
+
+After reboot, the following conditions were confirmed:
+
+- the VM booted successfully;
+- the fixed IP address remained available;
+- SSH key-based access worked;
+- the SSH alias remained functional;
+- networking returned normally;
+- no additional reboot was required.
+
+## Recovery Controls
+
+The primary rollback mechanism was the Proxmox snapshot:
+
+```text
+before-system-update
+```
+
+The Proxmox console remained available as an independent recovery path if SSH or networking failed.
+
+The snapshot will be removed after the system has remained stable for an appropriate verification period.
+
+## Lessons Learned
+
+- Updates should be inspected before installation.
+- Upgrade simulation helps identify removals and held packages.
+- Snapshots provide a fast rollback mechanism for lab virtual machines.
+- Snapshots are not substitutes for independent backups.
+- Service restarts may not update all running processes.
+- A reboot can be part of the normal update workflow.
+- SSH and network access must be tested after reboot.
+- Post-change validation is part of the change itself.
+- Temporary recovery snapshots should have a defined cleanup point.
+
+## Portfolio Evidence
+
+This lab demonstrates practical experience with:
+
+- Ubuntu package management;
+- APT repository metadata;
+- upgrade simulation;
+- Proxmox snapshots;
+- capacity checks;
+- change risk assessment;
+- controlled server reboot;
+- SSH post-reboot validation;
+- rollback planning;
+- infrastructure runbook creation.
+
+## Related Runbook
+
+```text
+runbooks/safe-system-update-phoenix-linux-01.md
+```
