@@ -580,3 +580,306 @@ This lab demonstrates practical experience with:
 ```text
 runbooks/systemd-service-and-timer-lab.md
 ```
+---
+
+# Storage, LVM, and Persistent Mounts
+
+## Learning Context
+
+| Field | Value |
+|---|---|
+| Module | 2 — Linux Administration |
+| Topic | Storage and Filesystems |
+| Subtopic | LVM Expansion, QEMU Guest Agent, and Persistent UUID-Based Mounts |
+| System | `phoenix-linux-01` |
+| Status | Completed and verified |
+
+## Lab Summary
+
+A complete storage administration lab was performed on `phoenix-linux-01`.
+
+The work included:
+
+- inspection of the existing LVM layout;
+- online root filesystem expansion;
+- QEMU Guest Agent installation;
+- creation of a dedicated lab disk;
+- GPT partitioning;
+- ext4 filesystem creation;
+- temporary and persistent mounting;
+- ownership configuration;
+- `/etc/fstab` validation;
+- reboot persistence testing.
+
+## Existing Storage Layout
+
+The VM originally had:
+
+```text
+32 GiB virtual disk
+30 GiB LVM partition
+15 GiB logical volume
+15 GiB free inside the volume group
+```
+
+The root filesystem was stored on:
+
+```text
+/dev/mapper/ubuntu--vg-ubuntu--lv
+```
+
+and mounted on:
+
+```text
+/
+```
+
+## LVM Expansion
+
+A Proxmox snapshot was created before the change:
+
+```text
+before-lvm-expansion
+```
+
+The logical volume and ext4 filesystem were expanded with:
+
+```bash
+sudo lvextend -l +100%FREE -r /dev/ubuntu-vg/ubuntu-lv
+```
+
+Final state:
+
+```text
+Root logical volume: 30G
+Root filesystem: 30G
+Available space: approximately 22G
+Volume group free space: 0
+```
+
+The expansion was completed online without reboot.
+
+## QEMU Guest Agent
+
+The Proxmox snapshot process initially reported that the guest agent was configured but not running.
+
+The package was installed with:
+
+```bash
+sudo apt install qemu-guest-agent
+```
+
+The agent became active:
+
+```text
+Active: active (running)
+```
+
+Proxmox then displayed the VM IP addresses:
+
+```text
+192.168.20.101
+fe80::be24:11ff:febd:df49
+```
+
+## Dedicated Data Disk
+
+A separate 4 GiB virtual disk was attached as:
+
+```text
+/dev/sdb
+```
+
+A GPT partition was created:
+
+```bash
+sudo parted /dev/sdb --script mklabel gpt mkpart primary ext4 0% 100%
+```
+
+The resulting partition was:
+
+```text
+/dev/sdb1
+```
+
+An ext4 filesystem was created:
+
+```bash
+sudo mkfs.ext4 -L phoenix-data /dev/sdb1
+```
+
+Filesystem identity:
+
+```text
+Label: phoenix-data
+UUID: 44913ffa-70d2-490c-8397-5f17fd2f6db6
+```
+
+## Mount Point
+
+The mount point was created:
+
+```bash
+sudo mkdir -p /mnt/phoenix-data
+```
+
+The filesystem was mounted manually:
+
+```bash
+sudo mount /dev/sdb1 /mnt/phoenix-data
+```
+
+The mount was verified with:
+
+```bash
+findmnt /mnt/phoenix-data
+df -h /mnt/phoenix-data
+```
+
+## Ownership
+
+The filesystem root was initially owned by `root`.
+
+Ownership was changed:
+
+```bash
+sudo chown igor:igor /mnt/phoenix-data
+```
+
+Write access was confirmed:
+
+```bash
+touch /mnt/phoenix-data/test-file.txt
+```
+
+The resulting file was owned by:
+
+```text
+igor:igor
+```
+
+## Persistent Mount
+
+The existing `/etc/fstab` file was backed up:
+
+```bash
+sudo cp /etc/fstab /etc/fstab.backup-before-phoenix-data
+```
+
+The following entry was added:
+
+```fstab
+UUID=44913ffa-70d2-490c-8397-5f17fd2f6db6 /mnt/phoenix-data ext4 defaults 0 2
+```
+
+The configuration was validated with:
+
+```bash
+sudo findmnt --verify --verbose
+sudo systemctl daemon-reload
+sudo findmnt --verify
+```
+
+The only remaining warning concerned the standard Ubuntu swap file.
+
+## Mount Testing
+
+The persistent mount was tested without reboot:
+
+```bash
+sudo umount /mnt/phoenix-data
+sudo mount -a
+findmnt /mnt/phoenix-data
+```
+
+The mount returned successfully.
+
+The VM was then rebooted.
+
+After reboot:
+
+```bash
+findmnt /mnt/phoenix-data
+ls -l /mnt/phoenix-data
+```
+
+confirmed that:
+
+- the filesystem mounted automatically;
+- the test file remained present;
+- ownership remained correct;
+- the persistent mount worked.
+
+## Storage Model
+
+```text
+disk
+  ↓
+partition
+  ↓
+filesystem
+  ↓
+UUID
+  ↓
+/etc/fstab
+  ↓
+mount point
+  ↓
+persistent access after reboot
+```
+
+LVM adds additional layers:
+
+```text
+disk
+  ↓
+partition
+  ↓
+LVM physical volume
+  ↓
+volume group
+  ↓
+logical volume
+  ↓
+filesystem
+  ↓
+mount point
+```
+
+## Lessons Learned
+
+- Free disk space and free LVM space are not the same.
+- Logical volume expansion and filesystem expansion are separate operations.
+- ext4 can be expanded while mounted.
+- New filesystems normally belong to `root`.
+- Ownership must match the intended user or service.
+- UUID-based mounts are more reliable than `/dev/sdX` names.
+- Manual mounts are temporary.
+- `/etc/fstab` makes mounts persistent.
+- `/etc/fstab` must be validated before reboot.
+- `mount -a` is a safe pre-reboot test.
+- QEMU Guest Agent improves Proxmox integration and snapshot consistency.
+
+## Portfolio Evidence
+
+This lab demonstrates practical experience with:
+
+- Linux block-device inspection;
+- LVM volume groups and logical volumes;
+- online ext4 expansion;
+- Proxmox snapshots;
+- QEMU Guest Agent;
+- GPT partitioning;
+- ext4 filesystem creation;
+- filesystem labels and UUIDs;
+- mount points;
+- ownership and permissions;
+- `/etc/fstab`;
+- persistent mounts;
+- storage recovery planning.
+
+## Related Runbook
+
+```text
+runbooks/storage-lvm-and-persistent-mounts.md
+```
