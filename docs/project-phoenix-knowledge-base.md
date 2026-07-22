@@ -1101,3 +1101,435 @@ This lab demonstrates practical experience with:
 ```text
 runbooks/service-user-and-shared-directory-permissions.md
 ```
+---
+
+# Logging and Log Rotation
+
+## Learning Context
+
+| Field | Value |
+|---|---|
+| Module | 2 — Linux Administration |
+| Topic | Logging and Log Rotation |
+| Subtopic | journald, Traditional Log Files, Rotation, Retention, and Compression |
+| System | `phoenix-linux-01` |
+| Status | Completed and verified |
+
+## Lab Summary
+
+A complete logging and log rotation workflow was implemented and tested on `phoenix-linux-01`.
+
+The lab used the existing Project Phoenix heartbeat log:
+
+```text
+/var/log/phoenix-heartbeat.log
+```
+
+The exercise covered traditional log files, persistent journal storage, log metadata, inode behavior, custom logrotate configuration, compression, retention, automatic scheduling, and state tracking.
+
+## Linux Logging Locations
+
+The main traditional log directory is:
+
+```text
+/var/log
+```
+
+Important examples observed during the lab included:
+
+```text
+/var/log/auth.log
+/var/log/syslog
+/var/log/kern.log
+/var/log/dpkg.log
+/var/log/apt/
+/var/log/journal/
+/var/log/phoenix-heartbeat.log
+```
+
+The directory:
+
+```text
+/var/log/journal/
+```
+
+contains persistent binary journal data managed by `systemd-journald`.
+
+Traditional text logs can be read with tools such as:
+
+```text
+cat
+less
+tail
+grep
+```
+
+Journal data is normally inspected with:
+
+```text
+journalctl
+```
+
+## Rotated Log Naming
+
+Typical rotation patterns include:
+
+```text
+application.log
+application.log.1
+application.log.2.gz
+application.log.3.gz
+```
+
+Meaning:
+
+```text
+application.log      → active log
+application.log.1    → newest rotated log
+application.log.2.gz → older compressed log
+```
+
+## Custom Log Metadata
+
+Before rotation, the heartbeat log had:
+
+```text
+Owner: root
+Group: root
+Mode: 0644
+Inode: 786837
+Size: approximately 27 KB
+```
+
+The inode was recorded so that the rotation method could be verified later.
+
+## Dedicated Logrotate Rule
+
+The following configuration was created:
+
+```text
+/etc/logrotate.d/phoenix-heartbeat
+```
+
+Configuration:
+
+```conf
+/var/log/phoenix-heartbeat.log {
+    su root root
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 root root
+}
+```
+
+## Directive Summary
+
+```text
+su root root
+```
+
+Uses an explicit user and group for rotation.
+
+```text
+daily
+```
+
+Makes the log eligible for rotation once per day.
+
+```text
+rotate 7
+```
+
+Retains seven rotated copies.
+
+```text
+compress
+```
+
+Compresses older rotated logs with gzip.
+
+```text
+delaycompress
+```
+
+Leaves the newest rotated log uncompressed for one additional cycle.
+
+```text
+missingok
+```
+
+Does not fail if the log file is missing.
+
+```text
+notifempty
+```
+
+Does not rotate an empty file.
+
+```text
+create 0644 root root
+```
+
+Creates a new active log with predictable ownership and permissions.
+
+## Validation and Troubleshooting
+
+The configuration was first tested with:
+
+```bash
+sudo logrotate -d /etc/logrotate.d/phoenix-heartbeat
+```
+
+The initial test detected:
+
+```text
+parent directory has insecure permissions
+```
+
+The parent directory `/var/log` was group-writable by `syslog`.
+
+The correct solution was to add:
+
+```conf
+su root root
+```
+
+to the dedicated rule.
+
+The permissions of `/var/log` were not changed.
+
+After the correction, debug validation completed without an error.
+
+## Forced Rotation Test
+
+A controlled rotation was performed with:
+
+```bash
+sudo logrotate -f /etc/logrotate.d/phoenix-heartbeat
+```
+
+Result:
+
+```text
+phoenix-heartbeat.log   → new empty active log
+phoenix-heartbeat.log.1 → previous log content
+```
+
+The new active log retained:
+
+```text
+Owner: root
+Group: root
+Mode: 0644
+```
+
+## Inode Verification
+
+After rotation:
+
+```text
+phoenix-heartbeat.log.1 → inode 786837
+phoenix-heartbeat.log   → inode 786745
+```
+
+The original inode moved to the rotated file.
+
+A new inode was created for the active log.
+
+This confirmed a rename-and-create rotation model rather than `copytruncate`.
+
+## Continued Logging Test
+
+The heartbeat service was manually started after rotation:
+
+```bash
+sudo systemctl start phoenix-heartbeat.service
+```
+
+A new heartbeat entry appeared in the new active log.
+
+This proved that:
+
+- the active log was recreated correctly;
+- the service could continue writing;
+- ownership and permissions were valid;
+- the rotated data remained preserved.
+
+## Compression Test
+
+A second forced rotation produced:
+
+```text
+phoenix-heartbeat.log
+phoenix-heartbeat.log.1
+phoenix-heartbeat.log.2.gz
+```
+
+This confirmed that:
+
+- the newest rotated log remained uncompressed;
+- the older rotated log was compressed;
+- `delaycompress` behaved as expected.
+
+The compressed log was successfully read with:
+
+```bash
+sudo zcat /var/log/phoenix-heartbeat.log.2.gz
+```
+
+## Automatic Scheduling
+
+The operating system uses:
+
+```text
+logrotate.timer
+```
+
+to start:
+
+```text
+logrotate.service
+```
+
+The timer was confirmed as:
+
+```text
+enabled
+active (waiting)
+```
+
+The service is an oneshot unit.
+
+After a successful run, this state is normal:
+
+```text
+inactive (dead)
+```
+
+## Execution Flow
+
+```text
+logrotate.timer
+        ↓
+logrotate.service
+        ↓
+/etc/logrotate.conf
+        ↓
+/etc/logrotate.d/phoenix-heartbeat
+        ↓
+rotation, retention, and compression
+```
+
+## State Tracking
+
+The logrotate state file is:
+
+```text
+/var/lib/logrotate/status
+```
+
+The heartbeat entry recorded:
+
+```text
+"/var/log/phoenix-heartbeat.log" 2026-7-22-19:31:15
+```
+
+This timestamp allows logrotate to determine whether the configured interval has passed.
+
+## Important Distinctions
+
+```text
+logrotate.timer
+```
+
+Controls when logrotate runs.
+
+```text
+daily
+```
+
+Defines the minimum rotation interval.
+
+```text
+/var/lib/logrotate/status
+```
+
+Tracks the last rotation time.
+
+```text
+-f
+```
+
+Forces rotation regardless of the normal interval.
+
+## Final State
+
+```text
+Managed log:
+  /var/log/phoenix-heartbeat.log
+
+Rule:
+  /etc/logrotate.d/phoenix-heartbeat
+
+Rotation:
+  daily
+
+Retention:
+  7 copies
+
+Compression:
+  gzip with one-cycle delay
+
+Active file:
+  root:root 0644
+```
+
+## Security Lessons
+
+- Do not make `/var/log` broadly writable to fix an application-specific issue.
+- Use dedicated logrotate rules for custom logs.
+- Define the correct execution identity with `su` when required.
+- Log files may contain operational and security-sensitive information.
+- Passwords, tokens, private keys, and secrets must never be written to logs.
+- Authentication logs should not be broadly readable.
+- Rotation is not a replacement for backup or centralized logging.
+
+## Troubleshooting Lessons
+
+- Always validate a new rule in debug mode first.
+- A valid configuration may still skip rotation because the interval has not passed.
+- `notifempty` prevents empty logs from rotating.
+- `missingok` suppresses errors for missing logs.
+- Incorrect ownership can prevent an application from reopening a new log.
+- Some applications require a reload or signal after rotation.
+- `copytruncate` should only be used when the application cannot reopen its log.
+- Forced rotation should be used carefully because repeated tests consume retention slots.
+
+## Portfolio Evidence
+
+This lab demonstrates practical experience with:
+
+- Linux log directory structure;
+- traditional log files;
+- persistent systemd journal storage;
+- file metadata and inode analysis;
+- custom logrotate configuration;
+- syntax and security validation;
+- rotation retention;
+- gzip compression;
+- delayed compression;
+- systemd timer inspection;
+- oneshot service behavior;
+- state-file interpretation;
+- post-rotation application verification;
+- logging security and recovery considerations.
+
+## Related Runbook
+
+```text
+runbooks/logging-and-logrotate-lab.md
+```
