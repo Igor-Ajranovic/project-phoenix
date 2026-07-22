@@ -883,3 +883,221 @@ This lab demonstrates practical experience with:
 ```text
 runbooks/storage-lvm-and-persistent-mounts.md
 ```
+---
+
+# Service Accounts and Shared Directory Permissions
+
+## Learning Context
+
+| Field | Value |
+|---|---|
+| Module | 2 — Linux Administration |
+| Topic | Permissions in Real Service Scenarios |
+| Subtopic | Service Accounts, Shared Groups, setgid, umask, and Least Privilege |
+| System | `phoenix-linux-01` |
+| Status | Completed and verified |
+
+## Lab Summary
+
+A dedicated Linux service account and shared service-data directory were configured on `phoenix-linux-01`.
+
+The lab demonstrated how a service and an authorized administrator can safely share storage without running the service as `root` or granting write access to unrelated users.
+
+## Service Account
+
+The service account was created with:
+
+```bash
+sudo useradd \
+  --system \
+  --no-create-home \
+  --shell /usr/sbin/nologin \
+  phoenixsvc
+```
+
+Confirmed properties:
+
+```text
+System UID
+Primary group: phoenixsvc
+No created home directory
+Interactive login disabled
+```
+
+## Service Data Directory
+
+The directory was created:
+
+```text
+/mnt/phoenix-data/service-data
+```
+
+Ownership:
+
+```text
+phoenixsvc:phoenixsvc
+```
+
+The service account successfully created:
+
+```text
+service-test.txt
+```
+
+## Administrator Access
+
+The administrator was added to the service group:
+
+```bash
+sudo usermod -aG phoenixsvc igor
+```
+
+A new SSH session was opened to refresh group membership.
+
+Group membership alone did not initially allow writing because the directory did not grant group write permission.
+
+The directory was changed to:
+
+```bash
+sudo chmod 775 /mnt/phoenix-data/service-data
+```
+
+The administrator could then write through the `phoenixsvc` group.
+
+## setgid
+
+The shared directory was configured with setgid:
+
+```bash
+sudo chmod 2775 /mnt/phoenix-data/service-data
+```
+
+Final display:
+
+```text
+drwxrwsr-x phoenixsvc phoenixsvc service-data
+```
+
+New files created by `igor` then inherited:
+
+```text
+group: phoenixsvc
+```
+
+while retaining:
+
+```text
+owner: igor
+```
+
+## umask
+
+The administrator's umask was:
+
+```text
+0002
+```
+
+Resulting file permissions:
+
+```text
+664 → rw-rw-r--
+```
+
+Resulting directory permissions:
+
+```text
+775 → rwxrwxr-x
+```
+
+The combination of setgid and umask `0002` produced consistent shared-group access.
+
+## Cross-Account Test
+
+A subdirectory created by `igor` inherited:
+
+```text
+owner: igor
+group: phoenixsvc
+setgid: enabled
+```
+
+The service account successfully created a file inside it.
+
+This proved that both the administrator and service account could work inside the same directory tree.
+
+## Negative Access Test
+
+The user `nobody` attempted to write to the service directory.
+
+Result:
+
+```text
+Permission denied
+```
+
+This confirmed least-privilege enforcement.
+
+## Final State
+
+```text
+Directory: /mnt/phoenix-data/service-data
+Owner: phoenixsvc
+Group: phoenixsvc
+Mode: 2775
+```
+
+Access:
+
+```text
+phoenixsvc → read/write
+igor       → read/write through group
+nobody     → no write access
+```
+
+## Lessons Learned
+
+- Services should use dedicated non-login accounts.
+- Administrators should receive access through groups.
+- Group membership and directory permissions must both allow writing.
+- Supplementary group changes may require a new login session.
+- setgid preserves shared group ownership.
+- umask controls default write permissions.
+- File ownership and group ownership are separate.
+- Positive and negative access tests are both necessary.
+- Least privilege must be implemented and verified.
+
+## Practical Applications
+
+This model is useful for:
+
+- Docker bind mounts;
+- application data;
+- database backups;
+- shared logs;
+- reverse-proxy files;
+- monitoring data;
+- scheduled backup directories;
+- service-generated reports.
+
+## Portfolio Evidence
+
+This lab demonstrates practical experience with:
+
+- Linux system users;
+- non-login service accounts;
+- supplementary groups;
+- ownership and permission management;
+- `chmod`;
+- `chown`;
+- setgid directories;
+- umask;
+- shared storage design;
+- least-privilege validation;
+- positive and negative permission testing.
+
+## Related Runbook
+
+```text
+runbooks/service-user-and-shared-directory-permissions.md
+```
