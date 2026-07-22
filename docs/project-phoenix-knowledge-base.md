@@ -1533,3 +1533,312 @@ This lab demonstrates practical experience with:
 ```text
 runbooks/logging-and-logrotate-lab.md
 ```
+---
+
+# Scheduled Tasks and Automation
+
+## Learning Context
+
+| Field | Value |
+|---|---|
+| Module | 2 — Linux Administration |
+| Topic | Scheduled Tasks and Automation |
+| Subtopic | cron, systemd Timers, Troubleshooting, and Safe Recurring Jobs |
+| System | `phoenix-linux-01` |
+| Status | Completed and verified |
+
+## Lab Summary
+
+A practical comparison between traditional `cron` scheduling and `systemd` timers was completed on `phoenix-linux-01`.
+
+The lab covered:
+
+- listing and interpreting systemd timers;
+- understanding timer-to-service relationships;
+- reviewing a custom oneshot service;
+- inspecting the traditional cron daemon;
+- reading system-wide cron syntax;
+- creating a user-level cron job;
+- defining an explicit cron environment;
+- verifying execution through logs;
+- testing a controlled failure;
+- restoring the valid job;
+- removing the temporary recurring schedule safely.
+
+## systemd Timer Model
+
+The existing Project Phoenix automation consists of:
+
+```text
+phoenix-heartbeat.timer
+phoenix-heartbeat.service
+```
+
+The timer defines when the job runs:
+
+```ini
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=phoenix-heartbeat.service
+```
+
+The service defines what runs:
+
+```ini
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/phoenix-heartbeat.sh
+```
+
+The operating model is:
+
+```text
+timer → service → script
+```
+
+## Enabled State
+
+The final unit state was:
+
+```text
+phoenix-heartbeat.timer   → enabled
+phoenix-heartbeat.service → disabled
+```
+
+This is correct for a oneshot service activated only by its timer.
+
+## Cron Service
+
+The traditional cron daemon was confirmed as:
+
+```text
+Loaded: loaded
+Enabled: yes
+Active: active (running)
+```
+
+Cron activity was visible in the system logs.
+
+## System-Wide Cron Syntax
+
+The main system crontab is:
+
+```text
+/etc/crontab
+```
+
+Its format is:
+
+```text
+minute hour day-of-month month day-of-week user command
+```
+
+Example:
+
+```cron
+17 * * * * root cd / && run-parts --report /etc/cron.hourly
+```
+
+System-wide cron files include an explicit user field.
+
+User crontabs do not.
+
+## User-Level Cron Test
+
+The user `igor` initially had no personal crontab.
+
+A temporary test job was created:
+
+```cron
+*/2 * * * * /usr/bin/date --iso-8601=seconds >> /mnt/phoenix-data/cron-lab.log 2>&1
+```
+
+The job ran every two minutes and produced timestamps such as:
+
+```text
+2026-07-22T19:48:01+00:00
+2026-07-22T19:50:01+00:00
+2026-07-22T19:52:01+00:00
+```
+
+## Cron Environment
+
+The user crontab was configured explicitly:
+
+```cron
+SHELL=/bin/sh
+PATH=/usr/local/bin:/usr/bin:/bin
+```
+
+This documented the actual non-interactive environment used by cron.
+
+The user's interactive Fish shell does not automatically apply to scheduled cron jobs.
+
+## Execution Audit
+
+The cron event was confirmed in:
+
+```text
+/var/log/syslog
+```
+
+Observed entry:
+
+```text
+(igor) CMD (/usr/bin/date --iso-8601=seconds >> /mnt/phoenix-data/cron-lab.log 2>&1)
+```
+
+This verified:
+
+```text
+Scheduler: cron
+Execution user: igor
+Command: exact configured command
+Audit location: /var/log/syslog
+```
+
+## Controlled Failure Test
+
+The valid command was temporarily replaced with:
+
+```cron
+*/2 * * * * /usr/bin/nonexistent-phoenix-command >> /mnt/phoenix-data/cron-error.log 2>&1
+```
+
+The captured error was:
+
+```text
+/bin/sh: 1: /usr/bin/nonexistent-phoenix-command: not found
+```
+
+This confirmed that:
+
+- cron executed the job;
+- `/bin/sh` handled the command;
+- the failure was intentional;
+- `stderr` was redirected correctly;
+- the error was available for troubleshooting.
+
+## Recovery
+
+The original `date` command was restored.
+
+New timestamps appeared after recovery:
+
+```text
+2026-07-22T19:54:01+00:00
+2026-07-22T19:56:01+00:00
+```
+
+This proved that the valid job resumed correctly.
+
+The temporary error log was then removed.
+
+## Cleanup
+
+The recurring test line was removed from the user crontab.
+
+Only the explicit environment remained:
+
+```cron
+SHELL=/bin/sh
+PATH=/usr/local/bin:/usr/bin:/bin
+```
+
+The final `cron-lab.log` metadata was:
+
+```text
+Modify: 2026-07-22 19:56:01 UTC
+Size: 130 bytes
+```
+
+No new entries appeared after the schedule was removed.
+
+## Cron and systemd Timer Comparison
+
+| Feature | cron | systemd timer |
+|---|---|---|
+| Simple recurring jobs | Strong | Strong |
+| User-level scheduling | Simple | More configuration |
+| Structured status | Limited | Native |
+| Logging | syslog and redirection | systemd journal |
+| Dependencies | Limited | Native |
+| Missed-run recovery | Limited | `Persistent=true` |
+| Boot-relative scheduling | Limited | Native |
+| Randomized delay | Limited | Native |
+| Sandboxing | Limited | Strong |
+| Failure state | Indirect | Unit status |
+
+## When to Use cron
+
+Cron is appropriate for:
+
+- simple recurring commands;
+- personal user jobs;
+- lightweight scripts;
+- existing legacy automation;
+- schedules that do not require dependencies or complex service controls.
+
+## When to Use systemd Timers
+
+Systemd timers are appropriate when the task requires:
+
+- service dependencies;
+- structured journal logging;
+- failure status;
+- boot-relative schedules;
+- resource controls;
+- a dedicated service user;
+- sandboxing;
+- missed-run handling;
+- integration with other systemd units.
+
+## Security Lessons
+
+- Do not store passwords, tokens, or private keys in crontab lines.
+- Use the least privileged execution identity.
+- Use full command paths.
+- Protect scheduled scripts from unauthorized modification.
+- Avoid running every recurring task as `root`.
+- Redirect or otherwise capture errors.
+- Remove obsolete scheduled jobs.
+- Review user and system crontabs regularly.
+- Prefer systemd service hardening for sensitive recurring tasks.
+
+## Troubleshooting Lessons
+
+- Verify the installed schedule with `crontab -l`.
+- Check `cron.service` status.
+- Inspect `/var/log/syslog` for `CRON` entries.
+- Confirm system time and timezone.
+- Use absolute paths.
+- Define required environment values explicitly.
+- Confirm directory write permissions.
+- Test commands manually before scheduling them.
+- Test controlled failure behavior.
+- Verify recovery after restoring a valid command.
+- Clean up temporary lab jobs.
+
+## Portfolio Evidence
+
+This lab demonstrates practical experience with:
+
+- systemd timers;
+- oneshot services;
+- timer and service separation;
+- cron daemon inspection;
+- system-wide crontab syntax;
+- user crontab management;
+- scheduled-job environment design;
+- output and error redirection;
+- syslog-based audit verification;
+- controlled failure testing;
+- recovery validation;
+- safe automation cleanup.
+
+## Related Runbook
+
+```text
+runbooks/scheduled-tasks-and-automation-lab.md
+```
