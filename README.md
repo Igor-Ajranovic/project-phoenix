@@ -722,7 +722,7 @@ This repository is intended to demonstrate:
 
 The portfolio emphasizes verified practical work rather than theoretical claims.
 
----
+---docs: rewrite main project README
 
 ## Professional Development Goal
 
