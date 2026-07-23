@@ -2715,3 +2715,481 @@ This lab demonstrates practical experience with:
 ```text
 runbooks/filesystem-monitoring-and-capacity-management.md
 ```
+---
+
+# Process Limits and Resource Control
+
+## Learning Context
+
+| Field | Value |
+|---|---|
+| Module | 2 — Linux Administration |
+| Topic | Process Limits and Resource Control |
+| Subtopic | CPU Priority, Shell Limits, systemd Constraints, Verification, and Cleanup |
+| System | `phoenix-linux-01` |
+| Status | Completed and verified |
+
+## Lab Summary
+
+A complete process and systemd resource-control lab was performed on `phoenix-linux-01`.
+
+The lab covered:
+
+- CPU and memory baselining;
+- process inspection;
+- process priority with `nice`;
+- safe workload termination with `timeout`;
+- shell limits through `ulimit`;
+- soft and hard file-descriptor limits;
+- service-level limits through systemd;
+- CPU quota enforcement;
+- memory and file-descriptor constraints;
+- exit-status handling;
+- cleanup of a temporary systemd unit.
+
+## Initial Resource Baseline
+
+Observed system state:
+
+```text
+Load average:
+  0.00, 0.00, 0.00
+
+Memory:
+  Total: 3.8 GiB
+  Used: 468 MiB
+  Available: 3.3 GiB
+
+Swap:
+  Total: 3.1 GiB
+  Used: 0 B
+
+Processes:
+  112
+```
+
+The system had no significant CPU or memory pressure.
+
+## Process Inspection
+
+Processes were sorted by CPU and memory usage using `ps`.
+
+Important fields included:
+
+```text
+PID
+USER
+NI
+COMMAND
+%CPU
+%MEM
+```
+
+The `NI` field represents the process nice value.
+
+## Nice Values
+
+Typical range:
+
+```text
+-20 → highest scheduling priority
+  0 → normal priority
+ 19 → lowest scheduling priority
+```
+
+A test workload was started with:
+
+```bash
+nice -n 10 timeout 30s sha256sum /dev/zero >/dev/null &
+```
+
+Observed result:
+
+```text
+Nice value: 10
+CPU usage: approximately 99.8%
+```
+
+This proved that `nice` changes relative scheduling priority but does not create a fixed CPU ceiling.
+
+Because no competing workload required the CPU, the low-priority process could still use almost one complete CPU core.
+
+## Timeout Behavior
+
+The workload ended with:
+
+```text
+Exit 124
+```
+
+Exit status `124` means that the `timeout` utility stopped the command because the configured duration expired.
+
+The process was then verified as no longer running.
+
+## Shell Resource Limits
+
+Current shell limits were inspected with:
+
+```bash
+ulimit -a
+```
+
+Important observed values:
+
+```text
+Open files: 1024
+Maximum user processes: 15144
+Stack size: 8192 KB
+Core file size: 0
+CPU time: unlimited
+Virtual memory: unlimited
+```
+
+## Soft and Hard Limits
+
+The open-file limits were:
+
+```text
+Soft limit: 1024
+Hard limit: 1048576
+```
+
+The soft limit is the active limit.
+
+The hard limit is the maximum value to which the user can normally raise the soft limit.
+
+The current shell soft limit was temporarily raised:
+
+```bash
+ulimit -Sn 4096
+```
+
+Result:
+
+```text
+4096
+```
+
+This change applied only to the current shell session and its child processes.
+
+## Shell and systemd Scope
+
+Shell limits apply to:
+
+```text
+current shell
+child processes launched from that shell
+```
+
+Systemd limits apply directly to:
+
+```text
+managed service
+service processes
+service cgroup
+```
+
+## Existing Service Limits
+
+The Project Phoenix heartbeat service showed:
+
+```text
+CPUQuotaPerSecUSec=infinity
+MemoryMax=infinity
+LimitNOFILE=524288
+LimitNPROC=15144
+```
+
+This confirmed that systemd services can have different defaults from interactive shell sessions.
+
+## Temporary Resource-Control Unit
+
+A dedicated lab service was created:
+
+```text
+/etc/systemd/system/phoenix-resource-lab.service
+```
+
+Initial service configuration:
+
+```ini
+[Unit]
+Description=Project Phoenix resource control lab
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c 'ulimit -n; echo "resource lab completed"'
+LimitNOFILE=256
+MemoryMax=64M
+CPUQuota=25%
+```
+
+The unit was validated with:
+
+```bash
+sudo systemd-analyze verify /etc/systemd/system/phoenix-resource-lab.service
+```
+
+No syntax errors were reported.
+
+## File-Descriptor Limit Test
+
+The service journal showed:
+
+```text
+256
+resource lab completed
+```
+
+This proved that:
+
+```ini
+LimitNOFILE=256
+```
+
+was applied inside the service.
+
+## Applied systemd Values
+
+Systemd reported:
+
+```text
+CPUQuotaPerSecUSec=250ms
+MemoryMax=67108864
+LimitNOFILE=256
+```
+
+Interpretation:
+
+```text
+250ms CPU time per second = 25% of one CPU core
+67108864 bytes = 64 MiB
+```
+
+## CPU Quota Test
+
+The service command was changed to:
+
+```ini
+ExecStart=/usr/bin/timeout 20s /usr/bin/sha256sum /dev/zero
+```
+
+The resource controls remained:
+
+```ini
+LimitNOFILE=256
+MemoryMax=64M
+CPUQuota=25%
+```
+
+During execution, the workload showed:
+
+```text
+sha256sum → approximately 25.1% CPU
+```
+
+This confirmed that:
+
+```ini
+CPUQuota=25%
+```
+
+was actively enforced.
+
+## Nice Versus CPUQuota
+
+```text
+nice
+```
+
+changes scheduler priority.
+
+```text
+CPUQuota
+```
+
+creates an actual CPU consumption ceiling.
+
+Comparison from the lab:
+
+```text
+nice test:
+  approximately 99.8% CPU
+
+systemd CPUQuota test:
+  approximately 25.1% CPU
+```
+
+## CPU Accounting
+
+The 20-second test consumed:
+
+```text
+5.025 seconds of CPU time
+```
+
+Expected calculation:
+
+```text
+20 seconds × 25% = 5 seconds
+```
+
+The measured CPU time closely matched the configured quota.
+
+## Expected Exit Status
+
+The first CPU quota test was marked failed because `timeout` returned:
+
+```text
+124
+```
+
+The service was updated with:
+
+```ini
+SuccessExitStatus=124
+```
+
+Final unit configuration:
+
+```ini
+[Unit]
+Description=Project Phoenix resource control lab
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/timeout 20s /usr/bin/sha256sum /dev/zero
+SuccessExitStatus=124
+LimitNOFILE=256
+MemoryMax=64M
+CPUQuota=25%
+```
+
+After reloading and retesting, the service completed with:
+
+```text
+Deactivated successfully
+Finished
+Consumed 5.025s CPU time
+```
+
+The expected timeout result was no longer treated as a service failure.
+
+## Cleanup
+
+The temporary service file was removed:
+
+```bash
+sudo rm /etc/systemd/system/phoenix-resource-lab.service
+sudo systemctl daemon-reload
+```
+
+Verification returned:
+
+```text
+Unit phoenix-resource-lab.service could not be found.
+```
+
+No temporary lab service remained installed.
+
+## Important Resource Controls
+
+### File descriptors
+
+```ini
+LimitNOFILE=4096
+```
+
+Useful for services handling many files, sockets, or network connections.
+
+### Memory ceiling
+
+```ini
+MemoryMax=512M
+```
+
+Limits the memory used by the service cgroup.
+
+### CPU ceiling
+
+```ini
+CPUQuota=50%
+```
+
+Limits the service to approximately half of one CPU core.
+
+### Relative CPU weight
+
+```ini
+CPUWeight=100
+```
+
+Controls relative CPU importance during contention but does not create a fixed maximum.
+
+### Process and thread control
+
+```ini
+LimitNPROC=512
+TasksMax=512
+```
+
+Can help contain runaway process or thread creation.
+
+## Security Lessons
+
+Resource limits can reduce the impact of:
+
+- runaway CPU workloads;
+- memory leaks;
+- descriptor leaks;
+- fork bombs;
+- compromised services;
+- poorly configured applications.
+
+Incorrectly low limits can also create denial-of-service conditions against legitimate workloads.
+
+Limits should therefore be:
+
+- based on measured behavior;
+- applied per service;
+- tested under load;
+- monitored after deployment;
+- documented with rollback steps.
+
+## Troubleshooting Lessons
+
+- `nice` does not impose a fixed CPU percentage.
+- Exit code `124` is expected when `timeout` expires.
+- Shell limits and systemd service limits are separate.
+- `daemon-reload` is required after changing unit files.
+- `systemctl show` reveals normalized applied values.
+- CPU accounting can validate quota enforcement.
+- `SuccessExitStatus` should accept only understood and intentional exit codes.
+- A oneshot service being inactive after completion is normal.
+- Temporary units should be removed after testing.
+
+## Portfolio Evidence
+
+This lab demonstrates practical experience with:
+
+- CPU and memory baselining;
+- process inspection;
+- Linux scheduling priority;
+- `nice`;
+- `timeout`;
+- exit-status interpretation;
+- `ulimit`;
+- soft and hard limits;
+- file descriptors;
+- systemd resource controls;
+- cgroup CPU quotas;
+- memory ceilings;
+- systemd accounting;
+- service verification;
+- controlled cleanup.
+
+## Related Runbook
+
+```text
+runbooks/process-limits-and-resource-control.md
+```
