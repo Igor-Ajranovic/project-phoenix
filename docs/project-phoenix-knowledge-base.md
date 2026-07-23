@@ -2312,3 +2312,406 @@ This lab demonstrates practical experience with:
 ```text
 runbooks/backup-and-restore-fundamentals.md
 ```
+---
+
+# Filesystem Monitoring and Capacity Management
+
+## Learning Context
+
+| Field | Value |
+|---|---|
+| Module | 2 — Linux Administration |
+| Topic | Filesystem Monitoring and Capacity Management |
+| Subtopic | Disk Usage, Inode Usage, Growth Analysis, and Safe Cleanup Planning |
+| System | `phoenix-linux-01` |
+| Status | Completed and verified |
+
+## Lab Summary
+
+A complete filesystem-capacity investigation was performed on `phoenix-linux-01`.
+
+The lab covered:
+
+- disk usage;
+- inode usage;
+- top-level directory analysis;
+- `/var` and `/home` growth investigation;
+- application-aware cleanup;
+- VS Code Remote Server version analysis;
+- targeted stale-version removal;
+- reclaimed-space verification;
+- inode-consumption testing with many small files;
+- cleanup and baseline restoration.
+
+## Filesystem Baseline
+
+### Root Filesystem
+
+```text
+Filesystem: /dev/mapper/ubuntu--vg-ubuntu--lv
+Mount point: /
+Size: 30G
+Used before cleanup: 7.6G
+Available before cleanup: 21G
+Usage before cleanup: 27%
+```
+
+Inode baseline:
+
+```text
+Total inodes: 1,966,080
+Used: 110,084
+Free: 1,855,996
+Usage: 6%
+```
+
+### Lab Filesystem
+
+```text
+Filesystem: /dev/sdb1
+Mount point: /mnt/phoenix-data
+Size: 3.9G
+Used: 44K
+Available: 3.7G
+Usage: 1%
+```
+
+Inode baseline:
+
+```text
+Total: 262,144
+Used: 18
+Free: 262,126
+Usage: 1%
+```
+
+## Disk Space and Inodes
+
+Disk blocks and inodes are separate filesystem resources.
+
+```text
+df -h
+```
+
+checks capacity.
+
+```text
+df -i
+```
+
+checks inode consumption.
+
+A filesystem may report:
+
+```text
+No space left on device
+```
+
+even when free capacity remains, if all inodes are exhausted.
+
+## Root Usage Analysis
+
+The root filesystem was analyzed with:
+
+```bash
+sudo du -xhd1 / 2>/dev/null | sort -h
+```
+
+Largest areas:
+
+```text
+/usr  → 2.3G
+/home → 1.9G
+/var  → 442M
+/etc  → 6.2M
+```
+
+The `-x` option prevented the analysis from crossing into the separate `/mnt/phoenix-data` filesystem.
+
+## `/var` Analysis
+
+Observed usage:
+
+```text
+/var/lib   → 231M
+/var/cache → 146M
+/var/log   → 64M
+```
+
+### `/var/lib`
+
+Contained important package-management state:
+
+```text
+/var/lib/apt  → 189M
+/var/lib/dpkg → 29M
+```
+
+These directories were identified as critical state and were not modified.
+
+### `/var/cache`
+
+The largest cache area was:
+
+```text
+/var/cache/apt → 108M
+```
+
+Further inspection showed:
+
+```text
+pkgcache.bin    → 54M
+srcpkgcache.bin → 54M
+```
+
+The downloaded package archive contained:
+
+```text
+0 .deb files
+```
+
+Therefore, `apt clean` would not have reclaimed meaningful space.
+
+The cache was not removed because the root filesystem already had approximately `21G` free.
+
+## Operational Decision
+
+```text
+A cleanup candidate is not automatically a cleanup requirement.
+```
+
+Cleanup should be based on:
+
+- actual capacity pressure;
+- measured recovery value;
+- dependency risk;
+- reproducibility;
+- operational need.
+
+## `/home` Analysis
+
+The dominant user-space consumer was:
+
+```text
+/home/igor/.vscode-server → 1.9G
+```
+
+Detailed analysis showed:
+
+```text
+/home/igor/.vscode-server/cli/servers → 1.8G
+```
+
+Three VS Code Remote Server versions existed:
+
+```text
+1.129.0 → 598M
+1.129.1 → 598M
+1.130.0 → 598M
+```
+
+## Active Dependency Verification
+
+The active VS Code Remote process used:
+
+```text
+1.129.1
+```
+
+The newest installed version was:
+
+```text
+1.130.0
+```
+
+The stale version was:
+
+```text
+1.129.0
+```
+
+The cleanup target was verified through:
+
+- active process inspection;
+- launcher filenames;
+- installation dates;
+- server directory structure;
+- exact `product.json` version parsing;
+- direct size measurement.
+
+## Targeted Cleanup
+
+Removed objects:
+
+```text
+Stable-125df4672b8a6a34975303c6b0baa124e560a4f7
+code-125df4672b8a6a34975303c6b0baa124e560a4f7
+```
+
+Recovered capacity:
+
+```text
+Server directory: 598M
+Launcher: 32M
+Total: approximately 630M
+```
+
+The active version and newest version were retained.
+
+## Post-Cleanup Result
+
+```text
+VS Code Remote usage:
+1.8G → 1.2G
+```
+
+```text
+Root filesystem used:
+7.6G → 7.0G
+```
+
+```text
+Root usage:
+27% → 25%
+```
+
+```text
+Available capacity:
+21G → 22G
+```
+
+## Inode Lab
+
+A dedicated test directory was created on:
+
+```text
+/mnt/phoenix-data
+```
+
+One thousand empty files were created.
+
+Before:
+
+```text
+Disk used: 48K
+Inodes used: 19
+```
+
+After:
+
+```text
+Disk used: 68K
+Inodes used: 1019
+```
+
+Measured result:
+
+```text
+1,000 files
+approximately 20K additional capacity
+1,000 additional inodes
+```
+
+This demonstrated that many tiny files can consume inodes without using much disk space.
+
+## Inode Cleanup
+
+The dedicated lab directory was removed.
+
+Final state:
+
+```text
+Disk used: 44K
+Inodes used: 18
+```
+
+The filesystem returned to its original baseline.
+
+## Safe Cleanup Workflow
+
+```text
+measure
+    ↓
+identify
+    ↓
+inspect
+    ↓
+verify dependencies
+    ↓
+select one confirmed target
+    ↓
+remove
+    ↓
+measure again
+```
+
+## Security Lessons
+
+- Do not run broad `rm -rf` commands against system directories.
+- Do not manually remove package state from `/var/lib`.
+- Do not delete active runtime versions.
+- Verify active processes before removing application data.
+- Prefer application-aware cleanup mechanisms.
+- Measure reclaimed capacity after every cleanup.
+- Preserve logs and data required for troubleshooting or recovery.
+- Use least privilege.
+- Document every meaningful deletion.
+
+## Troubleshooting Lessons
+
+- Check both `df -h` and `df -i`.
+- Use `du -x` to avoid crossing filesystem boundaries.
+- Large directories by bytes are not always large inode consumers.
+- Modification dates alone are not enough to identify stale data.
+- Structured metadata is more reliable than broad text searches.
+- A process may keep deleted files open and prevent immediate space recovery.
+- Application cache, state, logs, and runtime data must be treated differently.
+- Cleanup without evidence can create a larger operational problem than the capacity issue.
+
+## Monitoring Considerations
+
+Recommended metrics:
+
+```text
+filesystem used percentage
+filesystem available bytes
+inode used percentage
+inode availability
+filesystem growth rate
+mount availability
+read-only filesystem state
+```
+
+Example thresholds:
+
+```text
+Warning: 80%
+Critical: 90%
+```
+
+Thresholds should be adjusted to the filesystem size, growth rate, service importance, and operational response time.
+
+## Portfolio Evidence
+
+This lab demonstrates practical experience with:
+
+- `df`;
+- `du`;
+- inode analysis;
+- filesystem boundary control;
+- package cache investigation;
+- critical state identification;
+- VS Code Remote Server analysis;
+- process correlation;
+- JSON metadata parsing;
+- safe targeted cleanup;
+- capacity measurement;
+- inode exhaustion simulation;
+- cleanup verification;
+- operational decision-making.
+
+## Related Runbook
+
+```text
+runbooks/filesystem-monitoring-and-capacity-management.md
+```
