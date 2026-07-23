@@ -1842,3 +1842,473 @@ This lab demonstrates practical experience with:
 ```text
 runbooks/scheduled-tasks-and-automation-lab.md
 ```
+---
+
+# Backup and Restore Fundamentals
+
+## Learning Context
+
+| Field | Value |
+|---|---|
+| Module | 2 — Linux Administration |
+| Topic | Backup and Restore Fundamentals |
+| Subtopic | Archive Creation, Integrity Verification, Isolated Restore, and Recovery |
+| System | `phoenix-linux-01` |
+| Status | Completed and verified |
+
+## Lab Summary
+
+A complete backup and restore workflow was implemented and tested on `phoenix-linux-01`.
+
+The lab used dedicated test data and covered:
+
+- compressed archive creation;
+- archive inspection;
+- gzip integrity testing;
+- SHA-256 checksum generation and verification;
+- simulated source loss;
+- isolated restore testing;
+- metadata and content verification;
+- byte-for-byte comparison;
+- restoration to the original location;
+- cleanup of temporary restore data.
+
+## Lab Paths
+
+```text
+Source:
+  /home/igor/phoenix-backup-lab
+
+Backup destination:
+  /mnt/phoenix-data/backups
+
+Restore test location:
+  /home/igor/phoenix-restore-test
+
+Archive:
+  /mnt/phoenix-data/backups/phoenix-backup-lab.tar.gz
+
+Checksum:
+  /mnt/phoenix-data/backups/phoenix-backup-lab.tar.gz.sha256
+```
+
+## Source Data
+
+The lab dataset contained:
+
+```text
+phoenix-backup-lab/
+├── README.md
+└── config/
+    └── app.conf
+```
+
+Configuration content:
+
+```text
+service_name=phoenix-demo
+backup_enabled=true
+```
+
+Documentation content:
+
+```text
+# Phoenix Backup Lab
+
+This file is used to verify backup and restore integrity.
+```
+
+## Archive Creation
+
+The compressed archive was created with:
+
+```bash
+tar -czvf /mnt/phoenix-data/backups/phoenix-backup-lab.tar.gz \
+  -C /home/igor \
+  phoenix-backup-lab
+```
+
+Using:
+
+```text
+-C /home/igor
+```
+
+ensured that the archive contained a clean relative path:
+
+```text
+phoenix-backup-lab/
+```
+
+rather than an absolute filesystem path.
+
+## Archive Inspection
+
+The archive was inspected without extraction:
+
+```bash
+tar -tzvf /mnt/phoenix-data/backups/phoenix-backup-lab.tar.gz
+```
+
+The listing confirmed:
+
+- complete directory structure;
+- owner and group metadata;
+- permissions;
+- file sizes;
+- timestamps.
+
+## Compression Integrity
+
+The gzip stream was verified with:
+
+```bash
+gzip -t /mnt/phoenix-data/backups/phoenix-backup-lab.tar.gz
+```
+
+No output indicated a successful integrity test.
+
+This proved that the compressed stream was readable but did not replace a restore test.
+
+## SHA-256 Checksum
+
+A checksum was generated:
+
+```bash
+sha256sum /mnt/phoenix-data/backups/phoenix-backup-lab.tar.gz \
+  > /mnt/phoenix-data/backups/phoenix-backup-lab.tar.gz.sha256
+```
+
+Recorded value:
+
+```text
+bd369e41fbe1112a9d79e4e0d4cf8c9dec4ae6a14c05c477299ddcbc885ca282
+```
+
+The checksum was verified with:
+
+```bash
+cd /mnt/phoenix-data/backups
+sha256sum -c phoenix-backup-lab.tar.gz.sha256
+```
+
+Result:
+
+```text
+/mnt/phoenix-data/backups/phoenix-backup-lab.tar.gz: OK
+```
+
+## Checksum Meaning
+
+A checksum is a digital fingerprint of a file.
+
+It can detect:
+
+- corruption;
+- unintended modification;
+- incomplete transfer;
+- storage errors.
+
+A checksum does not prove:
+
+- that all required files were included;
+- that the backup is logically complete;
+- that a restore will work;
+- that the dependent application can use the restored data.
+
+## Simulated Data Loss
+
+The source directory was intentionally removed:
+
+```bash
+rm -rf /home/igor/phoenix-backup-lab
+```
+
+Its absence was verified before restore.
+
+The backup archive remained intact on the dedicated lab disk.
+
+## Isolated Restore
+
+The archive was restored first into:
+
+```text
+/home/igor/phoenix-restore-test
+```
+
+Command:
+
+```bash
+tar -xzvf /mnt/phoenix-data/backups/phoenix-backup-lab.tar.gz \
+  -C /home/igor/phoenix-restore-test
+```
+
+This prevented accidental overwriting of the original path before verification.
+
+## Why Isolated Restore Matters
+
+A safer restore workflow is:
+
+```text
+verify checksum
+        ↓
+inspect archive
+        ↓
+restore to isolated location
+        ↓
+verify content and metadata
+        ↓
+preserve current live data
+        ↓
+restore to production
+        ↓
+test the dependent service
+        ↓
+retain rollback capability
+```
+
+This reduces the risk of:
+
+- overwriting valid data;
+- restoring the wrong version;
+- applying incorrect ownership or permissions;
+- introducing unexpected archive contents;
+- disrupting a running service.
+
+## Restored Metadata
+
+The isolated restore preserved:
+
+```text
+Owner: igor
+Group: igor
+Directory mode: 775
+File mode: 664
+Original timestamps: preserved
+Directory hierarchy: complete
+```
+
+## Content Verification
+
+The restored configuration contained:
+
+```text
+service_name=phoenix-demo
+backup_enabled=true
+```
+
+The restored README contained:
+
+```text
+# Phoenix Backup Lab
+
+This file is used to verify backup and restore integrity.
+```
+
+## Direct Archive Inspection
+
+A file was read directly from the archive:
+
+```bash
+tar -xOzf /mnt/phoenix-data/backups/phoenix-backup-lab.tar.gz \
+  phoenix-backup-lab/config/app.conf
+```
+
+The uppercase `-O` option sent the file content to standard output without writing it to disk.
+
+## Byte-for-Byte Comparison
+
+The archive content was compared with the restored file:
+
+```bash
+diff \
+  <(tar -xOzf /mnt/phoenix-data/backups/phoenix-backup-lab.tar.gz phoenix-backup-lab/config/app.conf) \
+  /home/igor/phoenix-restore-test/phoenix-backup-lab/config/app.conf
+```
+
+No output confirmed identical content.
+
+## Restoration to the Original Location
+
+After successful isolated verification, the restored data was copied back:
+
+```bash
+cp -a /home/igor/phoenix-restore-test/phoenix-backup-lab \
+      /home/igor/
+```
+
+The `-a` option preserved:
+
+- structure;
+- permissions;
+- timestamps;
+- symbolic links;
+- ownership where permitted.
+
+The original location was successfully restored:
+
+```text
+/home/igor/phoenix-backup-lab
+```
+
+## Final Cleanup
+
+The temporary isolated restore copy was removed.
+
+Final state:
+
+```text
+Original source:
+  restored
+
+Verified backup archive:
+  retained
+
+SHA-256 checksum:
+  retained
+
+Temporary restore copy:
+  removed
+```
+
+## Backup Validation Layers
+
+```text
+1. Backup file exists
+2. Archive table of contents is readable
+3. Gzip integrity test passes
+4. Checksum verification passes
+5. Important file content is inspected
+6. Isolated restore succeeds
+7. Metadata is verified
+8. Restored content matches the archive
+9. Application-level recovery is tested
+```
+
+A backup should not be considered fully trusted until restore behavior has been tested.
+
+## Backup vs Snapshot
+
+A snapshot is useful for:
+
+- fast rollback;
+- point-in-time VM or filesystem state;
+- short-term protection before changes.
+
+A backup should:
+
+- exist independently from the source;
+- survive source deletion or failure;
+- support restoration elsewhere;
+- have defined retention;
+- be regularly verified.
+
+Snapshots are useful, but they should not be the only recovery mechanism.
+
+## 3-2-1 Principle
+
+A stronger backup strategy follows:
+
+```text
+3 copies of data
+2 different storage media
+1 copy off-site
+```
+
+This lab produced one local backup on a separate filesystem.
+
+It does not yet provide protection against:
+
+- complete host failure;
+- loss of both VM disks;
+- storage-controller failure;
+- theft;
+- fire;
+- ransomware affecting the same system.
+
+## Security Lessons
+
+- Do not blindly extract untrusted archives as `root`.
+- Inspect archive paths before extraction.
+- Avoid unexpected absolute paths.
+- Check symbolic links.
+- Verify restored ownership and permissions.
+- Protect checksum files from modification.
+- Encrypt backups containing sensitive information.
+- Store important backups separately from the source.
+- Stop dependent services before replacing live application data.
+- Preserve a rollback copy before production restore.
+
+## GUI-First Workflow
+
+VS Code is useful for:
+
+- creating and reviewing source files;
+- inspecting restored directory structures;
+- reading restored content;
+- visual text comparison;
+- documenting results.
+
+The terminal is more reliable for:
+
+- archive creation;
+- metadata inspection;
+- gzip verification;
+- checksums;
+- controlled extraction;
+- permission preservation;
+- byte-for-byte comparison.
+
+Recommended model:
+
+```text
+VS Code Explorer
+        ↓
+Create and inspect files
+
+VS Code integrated terminal
+        ↓
+Archive, verify, checksum, and restore
+
+VS Code Diff
+        ↓
+Visual content comparison
+```
+
+## Troubleshooting Lessons
+
+- A backup file existing does not prove it is usable.
+- An empty command output can mean success for tools such as `gzip -t` and `diff`.
+- Archive listing output should not be pasted back into the shell.
+- Checksum failure must be investigated before restore.
+- Permission errors should not automatically be solved with `sudo`.
+- Incorrect ownership can break an application after restore.
+- Successful extraction does not prove application recovery.
+- Restore validation should include content, metadata, and service behavior.
+
+## Portfolio Evidence
+
+This lab demonstrates practical experience with:
+
+- `tar` archive creation;
+- gzip compression;
+- archive inspection;
+- relative-path backup design;
+- SHA-256 checksums;
+- integrity verification;
+- isolated restore workflows;
+- ownership and permission validation;
+- timestamp preservation;
+- direct archive content inspection;
+- process substitution;
+- `diff` comparison;
+- archive-mode copy;
+- recovery planning;
+- backup security;
+- snapshot and backup distinctions.
+
+## Related Runbook
+
+```text
+runbooks/backup-and-restore-fundamentals.md
+```
