@@ -3193,3 +3193,535 @@ This lab demonstrates practical experience with:
 ```text
 runbooks/process-limits-and-resource-control.md
 ```
+---
+
+# Boot Process and Recovery Fundamentals
+
+## Learning Context
+
+| Field | Value |
+|---|---|
+| Module | 2 — Linux Administration |
+| Topic | Boot Process and Recovery Fundamentals |
+| Subtopic | Boot Analysis, Journal Review, Kernel Startup, systemd Targets, and Safe Recovery Planning |
+| System | `phoenix-linux-01` |
+| Status | Completed and verified |
+
+## Lab Summary
+
+A complete boot and recovery investigation was performed on `phoenix-linux-01`.
+
+The lab covered:
+
+- kernel and userspace boot timing;
+- `systemd-analyze blame`;
+- critical boot path analysis;
+- the default systemd target;
+- persistent journal boot history;
+- current and previous boot errors;
+- kernel and initramfs identification;
+- kernel command-line interpretation;
+- root filesystem remount behavior;
+- early kernel messages;
+- LVM activation during boot;
+- rescue and emergency targets;
+- safe `/etc/fstab` validation;
+- swap-file verification;
+- rollback planning;
+- recovery through the Proxmox console.
+
+## Boot Performance
+
+The measured startup time was:
+
+```text
+Kernel:    1.834 seconds
+Userspace: 3.876 seconds
+Total:     5.711 seconds
+```
+
+The default target was reached after:
+
+```text
+3.858 seconds of userspace initialization
+```
+
+This indicates a fast and healthy boot.
+
+## Blame Versus Critical Chain
+
+`systemd-analyze blame` showed:
+
+```text
+apt-daily-upgrade.service → 13.589 seconds
+systemd-networkd-wait-online.service → 1.986 seconds
+```
+
+However, the total boot completed in only `5.711` seconds.
+
+This demonstrated that services can run in parallel.
+
+A high value in `systemd-analyze blame` does not automatically mean that the unit delayed the final boot target.
+
+The actual critical path was:
+
+```text
+remote-fs-pre.target
+        ↓
+remote-fs.target
+        ↓
+apport.service
+        ↓
+multi-user.target
+        ↓
+graphical.target
+```
+
+The visible service delay on that path was approximately:
+
+```text
+255 milliseconds
+```
+
+## Default Target
+
+The configured default target was:
+
+```text
+graphical.target
+```
+
+The effective vendor link was:
+
+```text
+/usr/lib/systemd/system/default.target
+→ graphical.target
+```
+
+The target requires:
+
+```text
+multi-user.target
+```
+
+and only wants:
+
+```text
+display-manager.service
+```
+
+Therefore, the server can reach `graphical.target` without running a desktop environment.
+
+## Persistent Boot History
+
+The journal retained four boot sessions:
+
+```text
+-3 → oldest retained boot
+-2 → older boot
+-1 → previous boot
+ 0 → current boot
+```
+
+Persistent journal history allows troubleshooting of problems that occurred before a restart.
+
+## Current-Boot Warnings
+
+Warnings included:
+
+```text
+ACPI MMCONFIG warning
+virtual disk reset messages
+cron EXTRA_OPTS warning
+D-Bus unknown group "power" warnings
+known Project Phoenix resource-lab failure
+```
+
+The controlled resource-lab failure was already understood and resolved.
+
+## Serious Error Review
+
+Current-boot error-level journal output contained only the known lab-generated failure.
+
+Previous boot:
+
+```text
+-- No entries --
+```
+
+Current failed unit state:
+
+```text
+0 loaded units listed
+```
+
+This showed the difference between:
+
+```text
+journal history
+```
+
+and:
+
+```text
+current systemd failure state
+```
+
+## Active Kernel
+
+The running kernel was:
+
+```text
+6.8.0-136-generic
+```
+
+Boot artifacts:
+
+```text
+/boot/vmlinuz-6.8.0-136-generic
+/boot/initrd.img-6.8.0-136-generic
+```
+
+The kernel image contains the Linux kernel.
+
+The initramfs provides the temporary early userspace required to load drivers and activate storage before the real root filesystem becomes available.
+
+## Kernel Command Line
+
+The active command line was:
+
+```text
+BOOT_IMAGE=/vmlinuz-6.8.0-136-generic root=/dev/mapper/ubuntu--vg-ubuntu--lv ro
+```
+
+Interpretation:
+
+```text
+BOOT_IMAGE → selected kernel image
+root=      → LVM logical volume used as root
+ro         → initial read-only root mount
+```
+
+## Root Filesystem State
+
+The root filesystem was later observed as:
+
+```text
+/dev/mapper/ubuntu--vg-ubuntu--lv
+ext4
+rw,relatime
+```
+
+This confirmed the normal transition:
+
+```text
+early boot: read-only
+        ↓
+initialization and checks
+        ↓
+normal operation: read-write
+```
+
+## Virtualization and Security
+
+Early kernel logs confirmed:
+
+```text
+QEMU Standard PC
+KVM hypervisor detected
+NX protection active
+KVM clock source selected
+```
+
+This verified that the VM runs on KVM with QEMU-presented virtual hardware and active execute-disable protection.
+
+## LVM Activation
+
+The root storage path was confirmed:
+
+```text
+/dev/sda3
+    ↓
+LVM physical volume
+    ↓
+ubuntu-vg
+    ↓
+ubuntu-lv
+    ↓
+root filesystem
+```
+
+Journal messages confirmed:
+
+```text
+PV /dev/sda3 online
+VG ubuntu-vg is complete
+VG ubuntu-vg finished
+```
+
+## Rescue Mode
+
+`rescue.target` requires:
+
+```text
+sysinit.target
+rescue.service
+```
+
+It provides a broader administrative recovery environment after basic initialization.
+
+Typical uses include:
+
+- correcting service configuration;
+- restoring files;
+- disabling a broken service;
+- repairing non-critical mount configuration.
+
+## Emergency Mode
+
+`emergency.target` requires only:
+
+```text
+emergency.service
+```
+
+It provides a more minimal environment for severe early-boot failures.
+
+Typical causes include:
+
+- invalid `/etc/fstab`;
+- missing required storage;
+- failed essential mounts;
+- damaged root filesystem;
+- inability to reach rescue mode.
+
+## Recovery Console Requirement
+
+Both rescue and emergency services use:
+
+```ini
+StandardInput=tty-force
+```
+
+They are designed for a local TTY or virtual console.
+
+For this VM, the correct recovery channel is:
+
+```text
+Proxmox console
+```
+
+SSH should not be assumed to remain available.
+
+## Safe `/etc/fstab` Validation
+
+The current filesystem table was checked with:
+
+```bash
+sudo findmnt --verify --verbose
+```
+
+For `/mnt/phoenix-data`, validation confirmed:
+
+```text
+target exists
+UUID resolves to /dev/sdb1
+source exists
+filesystem type is ext4
+```
+
+Final validation:
+
+```text
+0 parse errors
+0 errors
+1 warning
+```
+
+## Swap Warning
+
+The only warning was:
+
+```text
+non-bind mount source /swap.img is a directory or regular file
+```
+
+This was expected because swap is implemented as a regular file.
+
+Active swap was confirmed:
+
+```text
+/swap.img
+Type: file
+Size: 3.1G
+Used: 0B
+Priority: -2
+```
+
+## `/etc/fstab` Backup
+
+The rollback file exists:
+
+```text
+/etc/fstab.backup-before-phoenix-data
+```
+
+A comparison showed that the only difference from the current file was:
+
+```text
+UUID=44913ffa-70d2-490c-8397-5f17fd2f6db6 /mnt/phoenix-data ext4 defaults 0 2
+```
+
+This provides a clear recovery path if the additional mount entry ever causes a problem.
+
+## Systemd Reload Requirement
+
+A later verification reported that systemd was still using an older generated view of `/etc/fstab`.
+
+The correct action was:
+
+```bash
+sudo systemctl daemon-reload
+```
+
+After reload:
+
+```text
+0 parse errors
+0 errors
+1 expected warning
+```
+
+## Safe `/etc/fstab` Workflow
+
+```text
+create backup
+        ↓
+edit one entry
+        ↓
+verify UUID
+        ↓
+verify mount point
+        ↓
+run findmnt --verify
+        ↓
+run systemctl daemon-reload
+        ↓
+test mount behavior
+        ↓
+reboot only after successful validation
+```
+
+## Recovery Workflow
+
+If a bad mount entry prevents normal boot:
+
+1. Open the Proxmox console.
+2. Enter rescue or emergency mode.
+3. Authenticate for the recovery shell.
+4. Remount `/` as read-write if necessary.
+5. Inspect `/etc/fstab`.
+6. Correct or comment out the failing entry.
+7. Restore a known-good backup when appropriate.
+8. Validate the configuration.
+9. Reboot.
+10. Confirm all required mounts.
+11. Review the boot journal.
+
+Potential recovery commands:
+
+```bash
+mount -o remount,rw /
+```
+
+```bash
+findmnt --verify
+```
+
+```bash
+cp /etc/fstab.backup-before-phoenix-data /etc/fstab
+```
+
+These commands should only be used after confirming the correct recovery context.
+
+## Verified Boot Flow
+
+```text
+Proxmox virtual hardware
+        ↓
+QEMU firmware environment
+        ↓
+bootloader
+        ↓
+vmlinuz-6.8.0-136-generic
+        ↓
+initrd.img-6.8.0-136-generic
+        ↓
+virtual disk discovery
+        ↓
+LVM activation
+        ↓
+root filesystem mounted read-only
+        ↓
+systemd
+        ↓
+root remounted read-write
+        ↓
+multi-user.target
+        ↓
+graphical.target
+        ↓
+normal SSH administration
+```
+
+## Security Lessons
+
+- Do not modify boot-critical configuration remotely without console access.
+- Protect Proxmox console access.
+- Recovery shells provide privileged access.
+- Back up `/etc/fstab` before editing.
+- Use UUIDs for persistent mounts.
+- Validate before reboot.
+- Do not disable security services only to reduce boot time.
+- Preserve persistent journal history.
+- Review unexpected `/boot` changes.
+- Keep recovery access independent from SSH.
+
+## Troubleshooting Lessons
+
+- `systemd-analyze blame` and `critical-chain` answer different questions.
+- Services often start in parallel.
+- Historical journal errors may remain after recovery.
+- `systemctl --failed` shows current state.
+- Persistent journals allow previous-boot analysis.
+- Initramfs is critical for LVM-backed root filesystems.
+- Root may begin read-only and later become read-write.
+- Rescue mode and emergency mode provide different recovery depths.
+- Swap-file warnings are not automatically errors.
+- `daemon-reload` is required after relevant configuration changes.
+- Configuration backups provide a predictable rollback path.
+
+## Portfolio Evidence
+
+This lab demonstrates practical experience with:
+
+- Linux boot timing;
+- systemd dependency analysis;
+- persistent boot journals;
+- current and previous boot troubleshooting;
+- kernel and initramfs inspection;
+- kernel command-line interpretation;
+- root mount analysis;
+- KVM/QEMU detection;
+- LVM boot activation;
+- rescue and emergency modes;
+- `/etc/fstab` validation;
+- swap verification;
+- rollback planning;
+- Proxmox console recovery design.
+
+## Related Runbook
+
+```text
+runbooks/boot-process-and-recovery-fundamentals.md
+```
